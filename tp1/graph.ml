@@ -33,6 +33,27 @@ let clear_marks g =
 let find_roots g =
   List.filter (fun n -> n.n_linked_by = []) g.g_nodes
 
-let has_cycle g = failwith "Graph.has_cycle: Non implementé"
+let has_cycle g =
+  let () = clear_marks g in
+  let rec dfs g n = 
+    if n.n_mark = InProgress then true
+    else if n.n_mark = Visited then false
+    else 
+      let () = n.n_mark <- InProgress in
+      let res = List.exists (fun n -> dfs g n) n.n_link_to in 
+      let () = n.n_mark <- Visited in res in
+  List.exists (fun n -> if n.n_mark = NotVisited then (dfs g n) else false) g.g_nodes 
 
-let topological g = failwith "Graph.topological: Non implementé"
+let topological g = 
+  if has_cycle g = true then raise Cycle else 
+
+  let () = clear_marks g in
+  let rec visit (n : 'a node) (tri_topo : 'a node list) =
+    if n.n_mark = Visited then tri_topo
+    else
+      let () = n.n_mark <- InProgress in
+      let l = List.fold_left (fun tri_topo n -> visit n tri_topo) tri_topo n.n_link_to in
+      let () = n.n_mark <- Visited in  
+      n :: l
+    in let t = List.fold_left (fun tri_topo n -> visit n tri_topo) [] g.g_nodes 
+  in List.map (fun x -> x.n_label) t
