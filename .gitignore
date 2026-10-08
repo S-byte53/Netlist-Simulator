@@ -1,0 +1,6 @@
+_build/
+*.cmi
+*.cmo
+*.cmx
+*.o
+.vscode/
