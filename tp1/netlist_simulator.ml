@@ -4,6 +4,9 @@ open Graph
 let print_only = ref false
 let number_steps = ref (-1)
 
+let lec_et_ajout_input x ty_val curr_env =
+  (*en fonction du type de la variable x, on va lire 1 ou plusieurs chiffres*)
+  ()
 let simulator program number_steps = 
 
   (*parcours variables de program et définition valeur par défaut*)
@@ -11,7 +14,12 @@ let simulator program number_steps =
 
   (*fonction qui va simuler le programme au pas i*)
   let rec simulation i curr_env=
-    ()
+    if i = 0 then 
+      ()
+    else 
+      (*on effectuera un Env.fold sur program.p_vars*)
+      ()
+      
   in
 
   simulation number_steps initial_env
