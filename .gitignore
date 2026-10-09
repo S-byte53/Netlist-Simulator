@@ -3,4 +3,5 @@ _build/
 *.cmo
 *.cmx
 *.o
+*.byte
 .vscode/
