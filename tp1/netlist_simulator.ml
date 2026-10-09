@@ -1,7 +1,21 @@
+open Netlist_ast
+open Graph
+
 let print_only = ref false
 let number_steps = ref (-1)
 
-let simulator program number_steps = failwith "netlist_simulator.simulator: Non implementé"
+let simulator program number_steps = 
+
+  (*parcours variables de program et définition valeur par défaut*)
+  let initial_env = Env.fold (fun x _ curr_env -> Env.add x 0 curr_env) program.p_vars Env.empty in
+
+  (*fonction qui va simuler le programme au pas i*)
+  let rec simulation i curr_env=
+    ()
+  in
+
+  simulation number_steps initial_env
+
 
 let compile filename =
   try
