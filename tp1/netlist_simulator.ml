@@ -1,12 +1,33 @@
 open Netlist_ast
 open Graph
 
+exception IncorrectLength
+exception IncorrectChar
+
 let print_only = ref false
 let number_steps = ref (-1)
 
+let verify_correct_char c = 
+  if c != '0' && c != '1' then raise IncorrectChar
+
+let read_n_digits n =  
+  let s = read_line () in
+  (*string bien lu*)
+
+  if (String.length s) != n then 
+    raise IncorrectLength
+  else
+    (*on a bien lu n valeurs, mais il faut vérifier que les 
+    caractères lus sont bien '0' ou '1'*)
+    String.iter verify_correct_char s ; 
+    String.fold_right (fun c l -> c :: l) s [] 
+
 let lec_et_ajout_input x ty_val curr_env =
   (*en fonction du type de la variable x, on va lire 1 ou plusieurs chiffres*)
-  ()
+  match ty_val with
+  | TBit -> Env.add x (read_n_digits 1) curr_env 
+  | TBitArray (length) -> Env.add x (read_n_digits length) curr_env 
+
 let simulator program number_steps = 
 
   (*parcours variables de program et définition valeur par défaut*)
@@ -17,7 +38,7 @@ let simulator program number_steps =
     if i = 0 then 
       ()
     else 
-      (*on effectuera un Env.fold sur program.p_vars*)
+      (*lecture des inputs dans un nouvel environement*)
       ()
       
   in
