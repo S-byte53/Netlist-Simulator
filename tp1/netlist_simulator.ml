@@ -1,6 +1,7 @@
 open Netlist_ast
 open Graph
 open Bool_string_tools
+open Netlist_printer
 
 module Tools = Bool_string_tools
 
@@ -179,6 +180,22 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) =
         | VBit (_) -> raise IncompatibleOperands
         | VBitArray (l) -> VBit (l.(i))
 
+(*traite une equation: calcule la valeur de l'expression,
+associe cette valeur à x dans nouv_env et renvoie nouv_env actualisé*)
+let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env.t) =
+  let (x, exp) = eq in
+  let v = eval_exp exp prec_env nouv_env in
+  Env.add x v nouv_env
+
+let print_outputs (program : Netlist_ast.program) (nouv_env : value Env.t) = 
+  List.iter (fun x -> print_endline (String.cat x " = " );
+  Netlist_printer.print_value Format.std_formatter (Env.find x nouv_env)) program.p_outputs
+
+let initial_value x program = 
+  let t = find_type x program.p_vars in
+  match t with
+  | TBit -> VBit(false)
+  | TBitArray(n) -> VBitArray (Array.make n false)
 
 let simulator program number_steps = 
 
@@ -188,7 +205,7 @@ let simulator program number_steps =
   let initial_env = 
     Env.fold (fun x _ curr_env -> 
               Env.add x 
-                      (String.init (find_length x program.p_vars) (fun i -> '0')) 
+                      (initial_value x program) 
                       curr_env) 
               program.p_vars 
               Env.empty 
@@ -207,7 +224,14 @@ let simulator program number_steps =
       in
       
       (*parcours des equations, calcul des variables et actualisation environement*)
-      ()
+      let nouv_env = List.fold_left (fun n_env eq -> eval_equation eq curr_env n_env) nouv_env program.p_eqs in
+
+      (*affichage des outputs*)
+      let () = print_outputs program nouv_env in
+
+      (*nouv_env contient les valeurs des variables après ce pas de la simulation*)
+      simulation (i - 1) nouv_env 
+
       
   in
 
