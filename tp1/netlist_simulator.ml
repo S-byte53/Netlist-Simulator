@@ -85,7 +85,7 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) =
     let v1 = get_value_arg a1 nouv_env in
     let v2 = get_value_arg a2 nouv_env in
      begin match b with
-     | Or -> 
+     | Xor -> 
         begin match (v1, v2) with
         | (VBit(b1), VBit(b2)) -> VBit (xor b1 b2)
         | (VBitArray(l1), VBitArray(l2)) ->
@@ -95,7 +95,7 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) =
               VBitArray (Array.map2 (fun x y -> xor x y) l1 l2)
         | (_, _) -> raise IncompatibleOperands
         end
-     | Xor -> 
+     | Or -> 
         begin match (v1, v2) with
         | (VBit(b1), VBit(b2)) -> VBit (b1 || b2)
         | (VBitArray(l1), VBitArray(l2)) ->
@@ -189,7 +189,10 @@ let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env
 
 let print_outputs (program : Netlist_ast.program) (nouv_env : value Env.t) = 
   List.iter (fun x -> print_endline (String.cat x " = " );
-  Netlist_printer.print_value Format.std_formatter (Env.find x nouv_env)) program.p_outputs
+                      Netlist_printer.print_value Format.std_formatter (Env.find x nouv_env); 
+                      Format.fprintf Format.std_formatter "@.") 
+             program.p_outputs
+
 
 let initial_value x program = 
   let t = find_type x program.p_vars in
@@ -220,7 +223,7 @@ let simulator program number_steps =
       let nouv_env = 
         List.fold_left (fun n_env x -> lec_et_ajout_input x (find_type x program.p_vars) n_env) 
                        Env.empty  
-                       program.p_outputs
+                       program.p_inputs
       in
       
       (*parcours des equations, calcul des variables et actualisation environement*)
