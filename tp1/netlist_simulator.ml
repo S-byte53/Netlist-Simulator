@@ -26,8 +26,9 @@ let verify_correct_char c =
   if c != '0' && c != '1' then raise IncorrectChar
 
 let read_n_digits n =  
-  let () = print_endline (String.cat "Introduisez " (String.cat (Int.to_string n) " bits:")) in
+  let () = print_string (String.cat " -> " (String.cat (Int.to_string n) " bit(s) ? ")) in
 
+  let () = Stdlib.flush stdout in
   let s = read_line () in
   (*string bien lu*)
 
@@ -42,7 +43,7 @@ let read_n_digits n =
 let lec_et_ajout_input x ty_val curr_env =
   (*en fonction du type de la variable x, on va lire 1 ou plusieurs chiffres*)
   (*affichage initial*)
-  let () = print_endline (String.cat "Lecture de la variable " (String.cat x " :")) in
+  let () = print_string x in
 
   match ty_val with
   | TBit -> Env.add x (read_n_digits 1) curr_env 
@@ -188,7 +189,7 @@ let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env
   Env.add x v nouv_env
 
 let print_outputs (program : Netlist_ast.program) (nouv_env : value Env.t) = 
-  List.iter (fun x -> print_endline (String.cat x " = " );
+  List.iter (fun x -> print_string (String.cat "  => " (String.cat x " = " ));
                       Netlist_printer.print_value Format.std_formatter (Env.find x nouv_env); 
                       Format.fprintf Format.std_formatter "@.") 
              program.p_outputs
@@ -215,10 +216,11 @@ let simulator program number_steps =
   in
   
   (*fonction qui va simuler le programme au pas i*)
-  let rec simulation i curr_env=
-    if i = 0 then 
+  let rec simulation i imax curr_env=
+    if i = imax + 1 then 
       ()
     else 
+      let () = print_endline (String.cat (String.cat "Step " (Int.to_string i)) ":") in
       (*lecture des inputs dans un nouvel environement*)
       let nouv_env = 
         List.fold_left (fun n_env x -> lec_et_ajout_input x (find_type x program.p_vars) n_env) 
@@ -233,12 +235,12 @@ let simulator program number_steps =
       let () = print_outputs program nouv_env in
 
       (*nouv_env contient les valeurs des variables après ce pas de la simulation*)
-      simulation (i - 1) nouv_env 
+      simulation (i + 1) imax nouv_env 
 
       
   in
 
-  simulation number_steps initial_env
+  simulation 1 number_steps initial_env
 
 
 let compile filename =
