@@ -9,6 +9,7 @@ exception IncorrectLength
 exception IncorrectChar
 exception IncompatibleOperands
 exception NotImplemented of string 
+exception NoROM of (int * int)
 
 let print_only = ref false
 let number_steps = ref (-1)
@@ -72,7 +73,14 @@ let verify_correct_slice i1 i2 v =
   | VBit (_) -> false
   | VBitArray (l) -> (0 <= i1) && (i1 <= i2) && (i2 < Array.length l)
 
-let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) =
+let to_int (v : value) = 
+  match v with
+  | VBit(false) -> 0
+  | VBit(true) -> 1
+  | VBitArray (a) -> Array.fold_right (fun b sum -> if b = false then sum * 2 else sum * 2 + 1)
+                                       a 0 
+
+let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t)=
   match exp with
   | Earg (a) -> get_value_arg a nouv_env  
   | Ereg (x) -> Env.find x prev_env 
@@ -140,7 +148,24 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) =
       | _ -> raise IncompatibleOperands
       end
     
-  | Erom (_, _, a) -> raise (NotImplemented "ROM non implémenté")
+  | Erom (addr_size, word_size, read_addr) -> 
+      if ROM.is_none rom then
+        (*c'est la 1ere execution de l'instruction ROM*)
+        (*on doit alors créer la mémoire ROM*)
+        raise (NoROM (addr_size, word_size))
+      else
+        (*on suppose qu'une ROM a bien été implémentée*)
+        (*cette ROM non vide correcte a été mise dans la variable rom*)
+        
+        (*vérification opérandes valides*)
+        let v = get_value_arg read_addr nouv_env in
+        let index_read = to_int v in
+        if (index_read < 0) || (index_read >= (1 lsl addr_size)) then
+          raise IncompatibleOperands
+        else
+          (*l'adresse en paramètre est valide*)
+          ROM.get_word rom index_read
+
   | Eram (_, _, a1, a2, a3, a4) -> raise (NotImplemented "RAM non implémenté")
 
 
@@ -183,9 +208,9 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) =
 
 (*traite une equation: calcule la valeur de l'expression,
 associe cette valeur à x dans nouv_env et renvoie nouv_env actualisé*)
-let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env.t) =
+let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t) =
   let (x, exp) = eq in
-  let v = eval_exp exp prec_env nouv_env in
+  let v = eval_exp exp prec_env nouv_env rom in
   Env.add x v nouv_env
 
 let print_outputs (program : Netlist_ast.program) (nouv_env : value Env.t) = 
@@ -214,9 +239,14 @@ let simulator program number_steps =
               program.p_vars 
               Env.empty 
   in
+
+  (*création du rom, si nécéssaire*)
+  let (ad, w) = ROM.scan_program program in
+  let rom = ROM.empty ad w in
+
   
   (*fonction qui va simuler le programme au pas i*)
-  let rec simulation i imax curr_env=
+  let rec simulation i imax curr_env rom =
     if i = imax + 1 then 
       ()
     else 
@@ -229,18 +259,18 @@ let simulator program number_steps =
       in
       
       (*parcours des equations, calcul des variables et actualisation environement*)
-      let nouv_env = List.fold_left (fun n_env eq -> eval_equation eq curr_env n_env) nouv_env program.p_eqs in
+      let nouv_env = List.fold_left (fun n_env eq -> eval_equation eq curr_env n_env rom) nouv_env program.p_eqs in
 
       (*affichage des outputs*)
       let () = print_outputs program nouv_env in
 
       (*nouv_env contient les valeurs des variables après ce pas de la simulation*)
-      simulation (i + 1) imax nouv_env 
+      simulation (i + 1) imax nouv_env rom
 
       
   in
 
-  simulation 1 number_steps initial_env
+  simulation 1 number_steps initial_env rom
 
 
 let compile filename =
