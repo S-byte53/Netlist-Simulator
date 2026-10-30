@@ -118,7 +118,6 @@ let schedule p =
   (*création effective du graphe de la netlist*)
   let () = parcours_equations p.p_eqs in
 
-
   (*tri topologique du graphe de la netlist*)
   try 
     let list_noeuds = topological g in

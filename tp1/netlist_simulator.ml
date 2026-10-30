@@ -15,6 +15,8 @@ exception NoROM of (int * int)
 let print_only = ref false
 let number_steps = ref (-1)
 
+let rom_file = ref ""
+
 (*retourne le type de la var x*)
 let find_type (x : ident) (curr_env : ty Env.t) =  Env.find x curr_env
 
@@ -149,14 +151,6 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom 
       end
     
   | Erom (addr_size, word_size, read_addr) -> 
-      if ROM.is_none rom then
-        (*c'est la 1ere execution de l'instruction ROM*)
-        (*on doit alors créer la mémoire ROM*)
-        raise (NoROM (addr_size, word_size))
-      else
-        (*on suppose qu'une ROM a bien été implémentée*)
-        (*cette ROM non vide correcte a été mise dans la variable rom*)
-        
         (*vérification opérandes valides*)
         let v = get_value_arg read_addr nouv_env in
         let index_read = to_int v in
@@ -251,7 +245,15 @@ let simulator program number_steps =
 
   (*création de la ROM, si nécessaire*)
   let (ad_rom, w_rom) = ROM.scan_program program in
-  let rom = ROM.empty ad_rom w_rom in
+  let rom =
+    if ad_rom > 0 then
+      if !rom_file = "" then
+        raise (NoROM (ad_rom, w_rom))
+      else
+        ROM.read_rom_from_file !rom_file ad_rom w_rom
+    else 
+        ROM.none ()
+  in
 
   (*création de la RAM, si nécessaire*)
   let (ad_ram, w_ram) = RAM.scan_program program in
@@ -301,7 +303,8 @@ let compile filename =
 
 let main () =
   Arg.parse
-    ["-n", Arg.Set_int number_steps, "Number of steps to simulate"]
+    [("-n", Arg.Set_int number_steps, "Number of steps to simulate");
+    ("-rom", Arg.Set_string rom_file, "File from which to read a ROM memory")]
     compile
     ""
 ;;
