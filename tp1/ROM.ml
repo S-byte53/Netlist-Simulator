@@ -27,10 +27,13 @@ let is_none rom = (rom.word_size = 0) && (rom.addr_size = 0)
 let get_word rom read_addr = rom.data.(read_addr)
 
 let scan_program p = 
-  let eq = List.find (fun (_, exp) -> match exp with
-                                        | Erom (_, _, _) -> true
-                                        | _ -> false) p.p_eqs in
-  let (_, exp) = eq in
-  match exp with 
-  | Erom(ad, w, _) -> (ad, w)
-  | _ -> (-1, -1)
+  begin try
+    let eq = List.find (fun (_, exp) -> match exp with
+                                          | Erom (_, _, _) -> true
+                                          | _ -> false) p.p_eqs in
+    let (_, exp) = eq in
+    match exp with 
+    | Erom(ad, w, _) -> (ad, w)
+    | _ -> (-1, -1)
+  with Not_found -> (-1, -1)
+end

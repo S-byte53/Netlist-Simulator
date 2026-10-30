@@ -2,6 +2,7 @@ open Netlist_ast
 open Graph
 open Bool_string_tools
 open Netlist_printer
+open Format
 
 module Tools = Bool_string_tools
 
@@ -27,8 +28,7 @@ let verify_correct_char c =
   if c != '0' && c != '1' then raise IncorrectChar
 
 let read_n_digits n =  
-  let () = print_string (String.cat " -> " (String.cat (Int.to_string n) " bit(s) ? ")) in
-
+  Format.fprintf Format.std_formatter " -> %d bit(s) ? %!" n;
   let () = Stdlib.flush stdout in
   let s = read_line () in
   (*string bien lu*)
@@ -44,7 +44,7 @@ let read_n_digits n =
 let lec_et_ajout_input x ty_val curr_env =
   (*en fonction du type de la variable x, on va lire 1 ou plusieurs chiffres*)
   (*affichage initial*)
-  let () = print_string x in
+  Format.fprintf Format.std_formatter "%s %!" x;
 
   match ty_val with
   | TBit -> Env.add x (read_n_digits 1) curr_env 
@@ -80,7 +80,7 @@ let to_int (v : value) =
   | VBitArray (a) -> Array.fold_right (fun b sum -> if b = false then sum * 2 else sum * 2 + 1)
                                        a 0 
 
-let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t)=
+let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t) (ram : RAM.t)=
   match exp with
   | Earg (a) -> get_value_arg a nouv_env  
   | Ereg (x) -> Env.find x prev_env 
@@ -166,7 +166,16 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom 
           (*l'adresse en paramètre est valide*)
           ROM.get_word rom index_read
 
-  | Eram (_, _, a1, a2, a3, a4) -> raise (NotImplemented "RAM non implémenté")
+  | Eram (addr_size, word_size, read_addr, write_enable, write_addr, write_data) -> 
+        (*dans tous les cas on doit lire ce qui est demandé, car l'écriture est effective au prochain cycle*)
+        let v = get_value_arg read_addr nouv_env in
+        let read_addr_int = to_int v in
+        if (read_addr_int < 0) || (read_addr_int >= (1 lsl addr_size)) then
+          raise IncompatibleOperands;
+        let output = RAM.get_word ram read_addr_int in
+        RAM.set_write_args ram write_enable write_addr write_data; 
+        output
+  
 
 
   | Econcat (a1, a2) -> 
@@ -208,15 +217,15 @@ let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom 
 
 (*traite une equation: calcule la valeur de l'expression,
 associe cette valeur à x dans nouv_env et renvoie nouv_env actualisé*)
-let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t) =
+let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t) (ram : RAM.t) =
   let (x, exp) = eq in
-  let v = eval_exp exp prec_env nouv_env rom in
+  let v = eval_exp exp prec_env nouv_env rom ram in
   Env.add x v nouv_env
 
 let print_outputs (program : Netlist_ast.program) (nouv_env : value Env.t) = 
-  List.iter (fun x -> print_string (String.cat "  => " (String.cat x " = " ));
+  List.iter (fun x -> Format.fprintf Format.std_formatter "  => %s = %!" x ; 
                       Netlist_printer.print_value Format.std_formatter (Env.find x nouv_env); 
-                      Format.fprintf Format.std_formatter "@.") 
+                      fprintf Format.std_formatter "@.") 
              program.p_outputs
 
 
@@ -240,37 +249,41 @@ let simulator program number_steps =
               Env.empty 
   in
 
-  (*création du rom, si nécéssaire*)
-  let (ad, w) = ROM.scan_program program in
-  let rom = ROM.empty ad w in
+  (*création de la ROM, si nécessaire*)
+  let (ad_rom, w_rom) = ROM.scan_program program in
+  let rom = ROM.empty ad_rom w_rom in
 
-  
+  (*création de la RAM, si nécessaire*)
+  let (ad_ram, w_ram) = RAM.scan_program program in
+  let ram = RAM.init_zero ad_ram w_ram in
+
   (*fonction qui va simuler le programme au pas i*)
-  let rec simulation i imax curr_env rom =
+  let rec simulation i imax curr_env rom ram =
     if i = imax + 1 then 
       ()
     else 
-      let () = print_endline (String.cat (String.cat "Step " (Int.to_string i)) ":") in
+      let _ = Format.fprintf Format.std_formatter "Step %d:@." i in
       (*lecture des inputs dans un nouvel environement*)
       let nouv_env = 
         List.fold_left (fun n_env x -> lec_et_ajout_input x (find_type x program.p_vars) n_env) 
                        Env.empty  
                        program.p_inputs
       in
-      
       (*parcours des equations, calcul des variables et actualisation environement*)
-      let nouv_env = List.fold_left (fun n_env eq -> eval_equation eq curr_env n_env rom) nouv_env program.p_eqs in
-
+      let nouv_env = List.fold_left (fun n_env eq -> eval_equation eq curr_env n_env rom ram) nouv_env program.p_eqs in
       (*affichage des outputs*)
       let () = print_outputs program nouv_env in
-
       (*nouv_env contient les valeurs des variables après ce pas de la simulation*)
-      simulation (i + 1) imax nouv_env rom
+
+      (*gestion de l'écriture de la RAM*)
+      RAM.write_if_needed ram nouv_env;
+
+      simulation (i + 1) imax nouv_env rom ram
 
       
   in
 
-  simulation 1 number_steps initial_env rom
+  simulation 1 number_steps initial_env rom ram
 
 
 let compile filename =

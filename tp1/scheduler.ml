@@ -2,23 +2,25 @@ open Netlist_ast
 open Graph
 
 exception Combinational_cycle
+exception RAM_dependency 
+exception Reg
 
-let read_exp eq = 
-  let list_single_arg a =
+
+let list_single_arg a =
       match a with
       | Avar (i) -> [i]
       | Aconst (_) -> []
-  in
 
+let read_exp eq = 
   let search_exp (exp : Netlist_ast.exp)  =
     match exp with
     | Earg (a) -> list_single_arg a
-    | Ereg (i) -> []
+    | Ereg _ -> raise Reg
     | Enot (a) -> list_single_arg a
     | Ebinop (b, a1, a2) -> let l = [list_single_arg a1 ; list_single_arg a2] in List.concat l 
     | Emux (a1, a2,  a3) -> let l = [list_single_arg a1 ; list_single_arg a2 ; list_single_arg a3] in List.concat l 
     | Erom (_, _, a) -> list_single_arg a
-    | Eram (_, _, a1, a2, a3, a4) -> let l = [list_single_arg a1 ; list_single_arg a2 ; list_single_arg a3; list_single_arg a4] in List.concat l
+    | Eram _ -> raise RAM_dependency
     | Econcat (a1, a2) -> let l = [list_single_arg a1 ; list_single_arg a2] in List.concat l
     | Eslice (_, _, a) -> list_single_arg a
     | Eselect (_, a) -> list_single_arg a
@@ -27,8 +29,30 @@ let read_exp eq =
   let (id, exp) = eq in id :: search_exp exp
 
 
+let ajout_noeud_graphe (g : 'a graph) (x : ident) =
+    begin try
+      let _ = node_of_label g x in ()
+        (*noeud x déjà trouvé --> on a pas besoin de l'ajouter*)
+    with 
+      Not_found -> let _ = add_node g x in ()
+      (*noeud x non trouvé, on l'ajoute dans le graphe*)
+    end
+
+let ajout_noeud_graphe_arg (g : 'a graph) (a : arg) = 
+  let l = list_single_arg a in
+  match l with
+  | [] -> ()
+  | x :: l' -> ajout_noeud_graphe g x
+
+let add_edge_arg (g : 'a graph) (id : ident) (a : arg) = 
+  let l = list_single_arg a in
+  match l with
+  | [] -> ()
+  | x :: l' -> add_edge g x id
+
+
 let traitement_equation (eq : equation) (g : 'a graph) = 
-  let (id, _) = eq in
+  let (id, exp) = eq in
   
   (*on lit les variables de l'equation --> par exemple: x = AND a b
     -> si besoin, on les ajoute dans le graphe de la netlist
@@ -38,20 +62,40 @@ let traitement_equation (eq : equation) (g : 'a graph) =
     match list_v with
     | [] -> ()
     | x :: list_v_aux -> 
-        (*on cherche la variable x dans le graphe g*)
-        let () =  begin try
-                    let _ = node_of_label g x in ()
-                    (*noeud x déjà trouvé --> on a pas besoin de l'ajouter*)
-                  with 
-                    Not_found -> let () = add_node g x in ()
-                    (*noeud x non trouvé, on l'ajoute dans le graphe*)
-                  end
+        (*ajout de la variable x dans le graphe g --> si elle y est déjà on ne fais rien*)
+        let () =  ajout_noeud_graphe g x
         in
         (*variable x est actuellement dans le graphe*)
         if i > 0 then add_edge g x id ; ajout_var list_v_aux (i + 1) in
 
-  ajout_var (read_exp eq) 0
-  
+  begin try
+    ajout_var (read_exp eq) 0
+  with 
+    |RAM_dependency ->
+      begin match exp with
+      | Eram(_, _, read_addr, write_enable, write_addr, write_data) -> 
+          ajout_noeud_graphe g id;
+
+          ajout_noeud_graphe_arg g read_addr;
+          add_edge_arg g id read_addr;
+
+          ajout_noeud_graphe_arg g write_enable;
+
+          ajout_noeud_graphe_arg g write_addr;
+
+          ajout_noeud_graphe_arg g write_data;
+
+      | _ -> failwith "Error"
+      end 
+    |Reg ->
+      begin match exp with
+      | Ereg x -> 
+          ajout_noeud_graphe g id;
+          ajout_noeud_graphe g x;
+      | _ -> failwith "Error" 
+      end
+  end
+
 (*vérifie si le terme de gauche de l'equation eq est la variable x*)
 let match_eq (eq : equation) (x : ident) = 
   let (id, _) = eq in id = x
@@ -74,10 +118,10 @@ let schedule p =
   (*création effective du graphe de la netlist*)
   let () = parcours_equations p.p_eqs in
 
+
   (*tri topologique du graphe de la netlist*)
   try 
     let list_noeuds = topological g in
-
     (*fonction pour le parcours du tri topologique et 
     la construction de la nouvelle liste d'equations*)
     let rec construct_liste_eq (topo : ident list) = 
