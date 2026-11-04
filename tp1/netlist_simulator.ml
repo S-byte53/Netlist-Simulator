@@ -1,7 +1,292 @@
+open Netlist_ast
+open Graph
+open Bool_string_tools
+open Netlist_printer
+open Format
+
+module Tools = Bool_string_tools
+
+exception IncorrectLength
+exception IncorrectChar
+exception IncompatibleOperands
+exception NotImplemented of string 
+exception NoROM of (int * int)
+
 let print_only = ref false
 let number_steps = ref (-1)
 
-let simulator program number_steps = failwith "netlist_simulator.simulator: Non implementé"
+let rom_file = ref ""
+
+(*retourne le type de la var x*)
+let find_type (x : ident) (curr_env : ty Env.t) =  Env.find x curr_env
+
+let find_length (x : ident) (curr_env : ty Env.t) = 
+  let t = find_type x curr_env in
+  match t with
+  | TBit -> 1
+  | TBitArray (n) -> n
+
+let verify_correct_char c = 
+  if c != '0' && c != '1' then raise IncorrectChar
+
+let read_n_digits n =  
+  Format.fprintf Format.std_formatter " -> %d bit(s) ? %!" n;
+  let () = Stdlib.flush stdout in
+  let s = read_line () in
+  (*string bien lu*)
+
+  if (String.length s) != n then 
+    raise IncorrectLength
+  else
+    (*on a bien lu n valeurs, mais il faut vérifier que les 
+    caractères lus sont bien '0' ou '1'*)
+    String.iter verify_correct_char s ; 
+    Tools.value_of_const s
+
+let lec_et_ajout_input x ty_val curr_env =
+  (*en fonction du type de la variable x, on va lire 1 ou plusieurs chiffres*)
+  (*affichage initial*)
+  Format.fprintf Format.std_formatter "%s %!" x;
+
+  match ty_val with
+  | TBit -> Env.add x (read_n_digits 1) curr_env 
+  | TBitArray (length) -> Env.add x (read_n_digits length) curr_env 
+
+
+let get_value_arg a (nouv_env : value Env.t) = 
+  match a with
+  | Avar(x) -> Env.find x nouv_env (*on cherche la valeur de x et on la renvoie*)   
+  | Aconst(v) -> v
+
+
+(*fonction auxiliaire pour eval_exp*)
+let xor a b = (a || b) && not (a && b)
+
+(*fonction qui vérifie que les arguments du multiplexeur sont cohérents au niveau des longueurs*)
+let verify_correct_mux (v1 : value) (v2 : value) (v3 : value) =
+   match (v1, v2, v3) with
+   | (VBitArray (l1), VBitArray (l2), VBit (b)) -> 
+      if Array.length l1 != Array.length l2 then false else true
+   | (VBit(b1), VBit(b2), VBit(l3)) -> true
+   | (_,_,_) -> false
+
+let verify_correct_slice i1 i2 v = 
+  match v with
+  | VBit (_) -> false
+  | VBitArray (l) -> (0 <= i1) && (i1 <= i2) && (i2 < Array.length l)
+
+let to_int (v : value) = 
+  match v with
+  | VBit(false) -> 0
+  | VBit(true) -> 1
+  | VBitArray (a) -> Array.fold_right (fun b sum -> if b = false then sum * 2 else sum * 2 + 1)
+                                       a 0 
+
+let eval_exp (exp : exp) (prev_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t) (ram : RAM.t)=
+  match exp with
+  | Earg (a) -> get_value_arg a nouv_env  
+  | Ereg (x) -> Env.find x prev_env 
+  | Enot (a) -> 
+      let val_a = get_value_arg a nouv_env in
+      begin match val_a with
+      | VBit (b) -> VBit (not b)
+      | VBitArray (l) -> VBitArray ( Array.map (fun x -> not x) l )
+      end
+  | Ebinop (b, a1, a2) ->
+    let v1 = get_value_arg a1 nouv_env in
+    let v2 = get_value_arg a2 nouv_env in
+     begin match b with
+     | Xor -> 
+        begin match (v1, v2) with
+        | (VBit(b1), VBit(b2)) -> VBit (xor b1 b2)
+        | (VBitArray(l1), VBitArray(l2)) ->
+            if Array.length l1 != Array.length l2 then
+              raise IncompatibleOperands
+            else
+              VBitArray (Array.map2 (fun x y -> xor x y) l1 l2)
+        | (_, _) -> raise IncompatibleOperands
+        end
+     | Or -> 
+        begin match (v1, v2) with
+        | (VBit(b1), VBit(b2)) -> VBit (b1 || b2)
+        | (VBitArray(l1), VBitArray(l2)) ->
+            if Array.length l1 != Array.length l2 then
+              raise IncompatibleOperands
+            else
+              VBitArray (Array.map2 (fun x y -> x || y) l1 l2)
+        | (_, _) -> raise IncompatibleOperands
+        end
+     | And -> 
+        begin match (v1, v2) with
+        | (VBit(b1), VBit(b2)) -> VBit (b1 && b2)
+        | (VBitArray(l1), VBitArray(l2)) ->
+            if Array.length l1 != Array.length l2 then
+              raise IncompatibleOperands
+            else
+              VBitArray (Array.map2 (fun x y -> x && y) l1 l2)
+        | (_, _) -> raise IncompatibleOperands
+        end
+     | Nand -> 
+        begin match (v1, v2) with
+        | (VBit(b1), VBit(b2)) -> VBit (not (b1 && b2))
+        | (VBitArray(l1), VBitArray(l2)) ->
+            if Array.length l1 != Array.length l2 then
+              raise IncompatibleOperands
+            else
+              VBitArray (Array.map2 (fun x y -> not (x && y)) l1 l2)
+        | (_, _) -> raise IncompatibleOperands
+        end
+     end
+  | Emux (a1, a2,  a3) -> 
+    let v1 = get_value_arg a1 nouv_env in
+    let v2 = get_value_arg a2 nouv_env in
+    let v3 = get_value_arg a3 nouv_env in
+     if not (verify_correct_mux v1 v2 v3) then 
+      raise IncompatibleOperands
+    else
+      begin match v3 with
+      | VBit(true) -> v1
+      | VBit(false) -> v2
+      | _ -> raise IncompatibleOperands
+      end
+    
+  | Erom (addr_size, word_size, read_addr) -> 
+        (*vérification opérandes valides*)
+        let v = get_value_arg read_addr nouv_env in
+        let index_read = to_int v in
+        if (index_read < 0) || (index_read >= (1 lsl addr_size)) then
+          raise IncompatibleOperands
+        else
+          (*l'adresse en paramètre est valide*)
+          ROM.get_word rom index_read
+
+  | Eram (addr_size, word_size, read_addr, write_enable, write_addr, write_data) -> 
+        (*dans tous les cas on doit lire ce qui est demandé, car l'écriture est effective au prochain cycle*)
+        let v = get_value_arg read_addr nouv_env in
+        let read_addr_int = to_int v in
+        if (read_addr_int < 0) || (read_addr_int >= (1 lsl addr_size)) then
+          raise IncompatibleOperands;
+        let output = RAM.get_word ram read_addr_int in
+        RAM.set_write_args ram write_enable write_addr write_data; 
+        output
+  
+
+
+  | Econcat (a1, a2) -> 
+      let v1 = get_value_arg a1 nouv_env in
+      let v2 = get_value_arg a2 nouv_env in
+      begin match (v1, v2) with
+      | (VBit (b1), VBit (b2)) -> VBitArray ([|b1; b2|])
+      | (VBit (b1), VBitArray (l2)) -> VBitArray (Array.append [|b1|] l2)
+      | (VBitArray (l1), VBit(b2)) -> VBitArray (Array.append l1 [|b2|])
+      | (VBitArray (l1), VBitArray (l2)) -> VBitArray (Array.append l1 l2)
+      end
+
+  (*la façon dont on vérifie la compatibilité des arguments ne permet pas de faire 
+  des slice depuis une valeur VBit(_)*)
+  | Eslice (i1, i2, a) -> 
+      let v = get_value_arg a nouv_env in
+      if not (verify_correct_slice i1 i2 v) then
+        raise IncompatibleOperands
+      else
+        begin match v with
+        | VBitArray (l) -> 
+            if i2 = i1 then 
+              VBit(l.(i1))  (*la slice qu'on veut faire donne 1 seul bit en sortie*)
+            else
+              VBitArray (Array.sub l i1 (i2 - i1 + 1)) (*slice qui produit au moins 2 bits*)
+        | _ -> raise IncompatibleOperands
+      end
+
+  (*la façon dont on vérifie la compatibilité des arguments ne permet pas de selectionner 
+  1 seul bit depuis une valeur VBit(_)*)
+  | Eselect (i, a) -> 
+      let v = get_value_arg a nouv_env in
+      if not (verify_correct_slice i i v) then
+        raise IncompatibleOperands
+      else
+        match v with
+        | VBit (_) -> raise IncompatibleOperands
+        | VBitArray (l) -> VBit (l.(i))
+
+(*traite une equation: calcule la valeur de l'expression,
+associe cette valeur à x dans nouv_env et renvoie nouv_env actualisé*)
+let eval_equation (eq : equation) (prec_env : value Env.t) (nouv_env : value Env.t) (rom : ROM.t) (ram : RAM.t) =
+  let (x, exp) = eq in
+  let v = eval_exp exp prec_env nouv_env rom ram in
+  Env.add x v nouv_env
+
+let print_outputs (program : Netlist_ast.program) (nouv_env : value Env.t) = 
+  List.iter (fun x -> Format.fprintf Format.std_formatter "  => %s = %!" x ; 
+                      Netlist_printer.print_value Format.std_formatter (Env.find x nouv_env); 
+                      fprintf Format.std_formatter "@.") 
+             program.p_outputs
+
+
+let initial_value x program = 
+  let t = find_type x program.p_vars in
+  match t with
+  | TBit -> VBit(false)
+  | TBitArray(n) -> VBitArray (Array.make n false)
+
+let simulator program number_steps = 
+
+  (*parcours variables de program et définition valeur par défaut*)
+  (*pour chaque variable, on cherche son nb de bits et on définit sa valeur par défaut
+  comme un string de cette longueur*)
+  let initial_env = 
+    Env.fold (fun x _ curr_env -> 
+              Env.add x 
+                      (initial_value x program) 
+                      curr_env) 
+              program.p_vars 
+              Env.empty 
+  in
+
+  (*création de la ROM, si nécessaire*)
+  let (ad_rom, w_rom) = ROM.scan_program program in
+  let rom =
+    if ad_rom > 0 then
+      if !rom_file = "" then
+        raise (NoROM (ad_rom, w_rom))
+      else
+        ROM.read_rom_from_file !rom_file ad_rom w_rom
+    else 
+        ROM.none ()
+  in
+
+  (*création de la RAM, si nécessaire*)
+  let (ad_ram, w_ram) = RAM.scan_program program in
+  let ram = RAM.init_zero ad_ram w_ram in
+
+  (*fonction qui va simuler le programme au pas i*)
+  let rec simulation i imax curr_env rom ram =
+    if i = imax + 1 then 
+      ()
+    else 
+      let _ = Format.fprintf Format.std_formatter "Step %d:@." i in
+      (*lecture des inputs dans un nouvel environement*)
+      let nouv_env = 
+        List.fold_left (fun n_env x -> lec_et_ajout_input x (find_type x program.p_vars) n_env) 
+                       Env.empty  
+                       program.p_inputs
+      in
+      (*parcours des equations, calcul des variables et actualisation environement*)
+      let nouv_env = List.fold_left (fun n_env eq -> eval_equation eq curr_env n_env rom ram) nouv_env program.p_eqs in
+      (*affichage des outputs*)
+      let () = print_outputs program nouv_env in
+      (*nouv_env contient les valeurs des variables après ce pas de la simulation*)
+
+      (*gestion de l'écriture de la RAM*)
+      RAM.write_if_needed ram nouv_env;
+
+      simulation (i + 1) imax nouv_env rom ram
+
+      
+  in
+
+  simulation 1 number_steps initial_env rom ram
+
 
 let compile filename =
   try
@@ -18,7 +303,8 @@ let compile filename =
 
 let main () =
   Arg.parse
-    ["-n", Arg.Set_int number_steps, "Number of steps to simulate"]
+    [("-n", Arg.Set_int number_steps, "Number of steps to simulate");
+    ("-rom", Arg.Set_string rom_file, "File from which to read a ROM memory")]
     compile
     ""
 ;;
