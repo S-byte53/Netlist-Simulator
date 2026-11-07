@@ -1,0 +1,9 @@
+2 4
+0110
+1010
+1111
+0011
+
+
+ce fichier ROM sera accepté par les netlists qui demandent:
+word_size = 4, addr_size = 2

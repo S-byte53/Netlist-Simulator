@@ -1,0 +1,26 @@
+INPUT a, b, c, d, read_addr, write_addr, write_enable, write_data
+OUTPUT g
+VAR a, b, c, d:8, read_addr:16, write_addr:16, write_enable, write_data:8, e1, e2, e3, e4, e5, e6, e7, e8:4, f1, f3, f4, f6, _l_16, g, h1, _d_sel_2, i1:2, i2:2, j1:4, _d_slc_1_4:4, k1:8, k2:8
+IN
+e1 = AND a b
+e2 = NAND a b
+e3 = OR a b
+e4 = XOR a b
+e5 = MUX c a b
+e6 = NOT a
+e7 = REG a
+e8 = 0010
+f1 = AND a b
+f3 = OR a b
+f4 = XOR a b
+f6 = NOT a
+_l_16 = OR a b
+g = AND _l_16 c
+h1 = SELECT 2 d
+_d_sel_2 = SELECT 2 d
+i1 = CONCAT a b
+i2 = CONCAT a b
+j1 = SLICE 1 4 d
+_d_slc_1_4 = SLICE 1 4 d
+k1 = ROM 16 8 read_addr
+k2 = RAM 16 8 read_addr write_enable write_addr write_data
